@@ -1,5 +1,7 @@
 package org.davidmoten.rx.jdbc;
 
+import static org.davidmoten.rx.jdbc.fixtures.Fixtures.listOf;
+import static org.davidmoten.rx.jdbc.fixtures.Fixtures.mockPersonResultSet;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -11,17 +13,14 @@ import java.io.InputStream;
 import java.io.Reader;
 import java.lang.reflect.Method;
 import java.math.BigInteger;
-import java.sql.Blob;
-import java.sql.Clob;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
+import java.sql.*;
 import java.time.Instant;
 import java.util.List;
 
 import javax.sql.DataSource;
 
 import org.davidmoten.rx.jdbc.exceptions.SQLRuntimeException;
+import org.davidmoten.rx.jdbc.fixtures.Person;
 import org.junit.FixMethodOrder;
 import org.junit.Test;
 import org.junit.runners.MethodSorters;
@@ -74,6 +73,24 @@ public class UtilTest {
     @Test
     public void testAutomapDateToString() {
         assertEquals(100L, ((java.sql.Date) Util.autoMap(new java.sql.Date(100), String.class)).getTime());
+    }
+
+    @Test(expected = RuntimeException.class)
+    public void testClassAutoMap() throws SQLException {
+        ResultSetMapper<Person> mapper = Util.autoMap(Person.class);
+
+        ResultSet mockedResultSet = mockPersonResultSet(listOf("John", "Doe"));
+        Person mappedPerson = mapper.apply(mockedResultSet);
+
+        assertEquals(mappedPerson, new Person("John", "Doe"));
+
+        mockedResultSet = mockPersonResultSet(listOf("John", null));
+        mappedPerson = mapper.apply(mockedResultSet);
+
+        assertEquals(mappedPerson, new Person("John", null));
+
+        mockedResultSet = mockPersonResultSet(listOf("John", "Doe", "Test"));
+        mapper.apply(mockedResultSet);
     }
 
     @Test

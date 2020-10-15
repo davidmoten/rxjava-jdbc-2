@@ -5,10 +5,7 @@ import java.io.InputStream;
 import java.io.Reader;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
-import java.lang.reflect.Proxy;
+import java.lang.reflect.*;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.Blob;
@@ -719,6 +716,11 @@ public enum Util {
 
             @Override
             public T apply(ResultSet rs) {
+
+                if (!cls.isInterface()) {
+                    return autoMapClass(rs, cls);
+                }
+
                 // access to this method will be serialized
                 // only create a new ProxyService when the ResultSet changes
                 // for example with the second run of a PreparedStatement
@@ -726,9 +728,68 @@ public enum Util {
                     this.rs = rs;
                     proxyService = new ProxyService<T>(rs, cls);
                 }
+
                 return autoMap(rs, cls, proxyService);
             }
         };
+    }
+
+    private static <T> T autoMapClass(ResultSet rs, Class<T> cls) {
+        try {
+            int n = rs.getMetaData().getColumnCount();
+            for (Constructor<?> c : cls.getDeclaredConstructors()) {
+                if (n == c.getParameterTypes().length) {
+                    return autoMap(rs, (Constructor<T>) c);
+                }
+            }
+            throw new RuntimeException("constructor with number of parameters=" + n + "  not found in " + cls);
+        } catch (SQLException e) {
+            throw new SQLRuntimeException(e);
+        }
+    }
+
+    /**
+     * Converts the ResultSet column values into parameters to the given
+     * constructor (with number of parameters equals the number of columns) of
+     * type <code>T</code> then returns an instance of type <code>T</code>.
+     *
+     * @param rs
+     *            the result set row
+     * @param c
+     *            constructor to use for instantiation
+     * @return automapped instance
+     */
+    private static <T> T autoMap(ResultSet rs, Constructor<T> c) {
+        Class<?>[] types = c.getParameterTypes();
+        List<Object> list = new ArrayList<Object>();
+        for (int i = 0; i < types.length; i++) {
+            list.add(autoMap(getObject(rs, types[i], i + 1), types[i]));
+        }
+        try {
+            return newInstance(c, list);
+        } catch (RuntimeException e) {
+            throw new RuntimeException(
+                    "problem with parameters=" + getTypeInfo(list) + ", rs types=" + getRowInfo(rs)
+                            + ". Be sure not to use primitives in a constructor when calling autoMap().",
+                    e);
+        }
+    }
+
+    /**
+     * Creates a new instance of type T, by invoking the provided constructor with the parameters
+     * @param c
+     *            constructor to use
+     * @param parameters
+     *            constructor parameters
+     * @return new instance of type T
+     */
+    @SuppressWarnings("unchecked")
+    private static <T> T newInstance(Constructor<?> c, List<Object> parameters) {
+        try {
+            return (T) c.newInstance(parameters.toArray());
+        } catch (InstantiationException | IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /**
@@ -1007,6 +1068,48 @@ public enum Util {
         final @RegEx String regex = "([a-z])([A-Z]+)";
         final String replacement = "$1_$2";
         return camelCased.replaceAll(regex, replacement);
+    }
+
+    /**
+     * Returns debugging info about the types of a list of objects.
+     *
+     * @param list
+     * @return
+     */
+    private static String getTypeInfo(List<Object> list) {
+
+        StringBuilder s = new StringBuilder();
+        for (Object o : list) {
+            if (s.length() > 0)
+                s.append(", ");
+            if (o == null)
+                s.append("null");
+            else {
+                s.append(o.getClass().getName());
+                s.append("=");
+                s.append(o);
+            }
+        }
+        return s.toString();
+    }
+
+    private static String getRowInfo(ResultSet rs) {
+        StringBuilder s = new StringBuilder();
+        try {
+            ResultSetMetaData md = rs.getMetaData();
+            for (int i = 1; i <= md.getColumnCount(); i++) {
+                String name = md.getColumnName(i);
+                String type = md.getColumnClassName(i);
+                if (s.length() > 0)
+                    s.append(", ");
+                s.append(name);
+                s.append("=");
+                s.append(type);
+            }
+        } catch (SQLException e1) {
+            throw new SQLRuntimeException(e1);
+        }
+        return s.toString();
     }
 
     public static ConnectionProvider connectionProvider(String url, Properties properties) {
